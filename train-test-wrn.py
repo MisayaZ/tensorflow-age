@@ -29,20 +29,21 @@ def run_training(image_path, batch_size, epoch, model_path, log_dir, start_lr):
         #test_images, test_labels = inputs(path=image_path, train=False, batch_size=batch_size, num_epochs=epoch)
         
         #record_file_names = ['./record_save/train-resave.tfrecords', './record_save/train-flip.tfrecords']
-        record_file_names = ['./record_save/train-resize.tfrecords']
+        record_file_names = ['./record_save/train.tfrecords']
         train_images, train_labels = inputs_multifile_data(record_file_names=record_file_names, train=True, batch_size=batch_size, num_epochs=epoch)
         test_images, test_labels = inputs_data(record_file_path=image_path, train=False, batch_size=batch_size, num_epochs=None)
         
         
         images = tf.placeholder(tf.float32, [batch_size, HEIGHT, WIDTH, CHANNEL])
-        labels = tf.placeholder(tf.int32, [batch_size])
+        labels = tf.placeholder(tf.int32, [batch_size, 88])
+        labels_test = tf.placeholder(tf.int32, [batch_size])
         
         # train_mode = tf.placeholder(tf.bool)
         # load network
 
         decay_step = 10000  #10 * 190000 / 128
         hp = resnet.HParams(batch_size=batch_size,
-                            num_classes=73,
+                            num_classes=89,
                             num_residual_units=2,#2
                             k=4,   #caffe output k = 4
                             weight_decay=0.0005,
@@ -52,7 +53,7 @@ def run_training(image_path, batch_size, epoch, model_path, log_dir, start_lr):
                             momentum=0.9,
                             drop_prob = 0.5)
 
-        net = resnet.WResNet(hp, images, labels, global_step)#, is_train=True
+        net = resnet.WResNet(hp, images, labels, labels_test, global_step)#, is_train=True
         net.build_model()
         net.build_train_op()
         
@@ -95,7 +96,7 @@ def run_training(image_path, batch_size, epoch, model_path, log_dir, start_lr):
         #tf.local_variables_initializer().run()
 
 
-        merged = tf.summary.merge_all()
+        #merged = tf.summary.merge_all()
         if not os.path.exists(log_dir):
             os.mkdir(log_dir)
         train_writer = tf.summary.FileWriter(log_dir, sess.graph)
@@ -134,11 +135,9 @@ def run_training(image_path, batch_size, epoch, model_path, log_dir, start_lr):
                 test_loss, test_acc = 0.0, 0.0
                 for i in range(test_interval):
                     test_images_val, test_labels_val = sess.run([test_images, test_labels])
-                    loss_value, acc_value = sess.run([net.loss, net.acc],
-                                feed_dict={images:test_images_val, labels:test_labels_val, net.is_train:False})
-                    test_loss += loss_value
+                    acc_value = sess.run(net.acc,
+                                feed_dict={images:test_images_val, labels_test:test_labels_val, net.is_train:False})
                     test_acc += acc_value
-                test_loss /= test_interval
                 test_acc /= test_interval
                 #test_best_acc = max(test_best_acc, test_acc)
                 
@@ -146,11 +145,10 @@ def run_training(image_path, batch_size, epoch, model_path, log_dir, start_lr):
                     test_best_acc = test_acc
                     test_good_step = step
                 print('!!!!!! test_good_step: ', test_good_step)
-                format_str = ('%s: (Test)     step %d, loss=%.4f, acc=%.4f ')
-                print(format_str % (datetime.now(), step, test_loss, test_acc))
+                format_str = ('%s: (Test)     step %d, acc=%.4f ')
+                print(format_str % (datetime.now(), step, test_acc))
 
                 test_summary = tf.Summary()
-                test_summary.value.add(tag='test/loss', simple_value=test_loss)
                 test_summary.value.add(tag='test/acc', simple_value=test_acc)
                 test_summary.value.add(tag='test/best_acc', simple_value=test_best_acc)
                 train_writer.add_summary(test_summary, step)
@@ -160,8 +158,21 @@ def run_training(image_path, batch_size, epoch, model_path, log_dir, start_lr):
             # Train
             start_time = time.time()
             train_images_val, train_labels_val = sess.run([train_images, train_labels])
-            _, lr_value, train_loss, train_acc, train_summary_str = sess.run([net.train_op, net.lr, net.loss, net.acc, merged],
-                                             feed_dict={images:train_images_val, labels:train_labels_val, net.is_train:True})#net.train_op
+            batch_labels = []
+            for age in list(train_labels_val):
+                plabel = np.zeros(shape=(88), dtype=np.float32)
+                if age == 0:
+                    age = 1
+                if age > 88:
+                    age = 88
+                plabel[:age] = 1
+                batch_labels.append(plabel)
+            batch_labels = np.array(batch_labels)
+
+
+
+            _, lr_value, train_loss  = sess.run([net.train_op, net.lr, net.loss],
+                                             feed_dict={images:train_images_val, labels:batch_labels, net.is_train:True})#net.train_op
             duration = time.time() - start_time
 
             assert not np.isnan(train_loss)
@@ -173,17 +184,17 @@ def run_training(image_path, batch_size, epoch, model_path, log_dir, start_lr):
                 num_examples_per_step = batch_size
                 examples_per_sec = num_examples_per_step / duration
                 sec_per_batch = float(duration)
-                format_str = ('%s: (Training) step %d, loss=%.4f, acc=%.4f, lr=%f (%.1f examples/sec; %.3f '
+                format_str = ('%s: (Training) step %d, loss=%.4f, lr=%f (%.1f examples/sec; %.3f '
                               'sec/batch)')
-                print(format_str % (datetime.now(), step, train_loss, train_acc, lr_value,
+                print(format_str % (datetime.now(), step, train_loss, lr_value,
                                      examples_per_sec, sec_per_batch))
-                print(sess.run([net.train_op, net.preds],feed_dict={images:train_images_val, labels:train_labels_val, net.is_train:True}))
-                train_writer.add_summary(train_summary_str, step)
+                print(sess.run([net.train_op, net.preds],feed_dict={images:train_images_val, labels:batch_labels, net.is_train:True}))
+                #train_writer.add_summary(train_summary_str, step)
                 
-                if (train_best_acc <= train_acc)  and (train_best_acc > 0.95):
-                    train_best_acc = train_acc
-                    train_good_step = step
-                    print('!!!!!! train_good_step: ', train_good_step)
+                #if (train_best_acc <= train_acc)  and (train_best_acc > 0.95):
+                #    train_best_acc = train_acc
+                #    train_good_step = step
+                #    print('!!!!!! train_good_step: ', train_good_step)
 
             # Save the model checkpoint periodically.
             #if (step > init_step and step % display == 0) or (step + 1) == max_steps:
@@ -195,9 +206,9 @@ def run_training(image_path, batch_size, epoch, model_path, log_dir, start_lr):
                     checkpoint_path = os.path.join(model_path, 'model_age.ckpt')
                     saver.save(sess, checkpoint_path, global_step=step)
             
-            if(step == train_good_step) and (train_best_acc > 0.95):
-                checkpoint_path = os.path.join(model_path, 'model_age.ckpt')
-                saver.save(sess, checkpoint_path, global_step=step)
+            #if(step == train_good_step) and (train_best_acc > 0.95):
+            #    checkpoint_path = os.path.join(model_path, 'model_age.ckpt')
+            #    saver.save(sess, checkpoint_path, global_step=step)
          # Wait for threads to finish.
         coord.join(threads)
         sess.close()

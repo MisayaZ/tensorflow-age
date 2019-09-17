@@ -16,10 +16,11 @@ HParams = namedtuple('HParams',
  
 
 class WResNet(object):
-    def __init__(self, hp, images, labels, global_step):#, is_train
+    def __init__(self, hp, images, labels, test_labels,global_step):#, is_train
         self._hp = hp # Hyperparameters
         self._images = images # Input image
         self._labels = labels
+        self._test_labels = test_labels
         self._global_step = global_step
         self.is_train = tf.placeholder(tf.bool)        
 
@@ -89,14 +90,14 @@ class WResNet(object):
             print('\tBuilding unit: %s' % scope.name)
             x_shape = x.get_shape().as_list()
             x = tf.reshape(x, [-1, x_shape[1]])
-            x = utils._fc(x, self._hp.num_classes)
+            x = utils._fc(x, (self._hp.num_classes-1)*2)
 
         self._logits = x
 
         # Probs & preds & acc
-        self.probs = tf.nn.softmax(x, name='probs')
+        #self.probs = tf.nn.softmax(x, name='probs')
         #self.preds = tf.to_int32(tf.argmax(self._logits, 1, name='preds'))
-        self.preds = tf.cast(tf.argmax(self._logits, 1, name='preds'),dtype=tf.int32)
+        #self.preds = tf.cast(tf.argmax(self._logits, 1, name='preds'),dtype=tf.int32)
 
 
     def build_model(self):
@@ -169,23 +170,32 @@ class WResNet(object):
             print('\tBuilding unit: %s' % scope.name)
             x_shape = x.get_shape().as_list()
             x = tf.reshape(x, [-1, x_shape[1]])
-            x = utils._fc(x, self._hp.num_classes)
+            x = utils._fc(x, (self._hp.num_classes-1)*2)
 
         self._logits = x
 
         # Probs & preds & acc
-        self.probs = tf.nn.softmax(x, name='probs')
-
-        self.preds = tf.cast(tf.argmax(self._logits, 1, name='preds'),dtype=tf.int32)
+        self.preds = tf.reshape(self._logits, [-1, self._hp.num_classes-1, 2])
+        self.preds = tf.argmax(self.preds, axis=2)
+        self.preds = tf.cast(tf.reduce_sum(self.preds, axis=1, name='preds'), dtype=tf.int32)
+        #self.preds = tf.cast(tf.argmax(self._logits, 1, name='preds'),dtype=tf.int32)
 
         ones = tf.cast(np.ones([self._hp.batch_size]), dtype=tf.float32)
         zeros = tf.constant(np.zeros([self._hp.batch_size]), dtype=tf.float32)
-        correct = tf.where(tf.equal(self.preds, self._labels), ones, zeros)
+        correct = tf.where(tf.equal(self.preds, self._test_labels), ones, zeros)
         self.acc = tf.reduce_mean(correct, name='acc')
         tf.summary.scalar('accuracy', self.acc)
 
         # Loss & acc
-        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=x, labels=self._labels)
+        outs = []
+        for i in range(self._hp.num_classes-1):
+            age_label = tf.slice(self._labels, [0,i], [self._hp.batch_size,1])
+            age_label = tf.reshape(age_label, [self._hp.batch_size])
+            age_fc1 = tf.slice(x, [0, 2*i], [self._hp.batch_size, 2])
+            age_softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=age_fc1, labels=age_label)
+            outs.append(age_softmax)
+            #loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=x, labels=self._labels)
+        loss = tf.add_n(outs)
         self.loss = tf.reduce_mean(loss, name='cross_entropy')
         tf.summary.scalar('cross_entropy', self.loss)
 

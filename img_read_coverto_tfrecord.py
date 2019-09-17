@@ -31,7 +31,7 @@ def read_jpgs_from(path, num_classes, one_hot=False):
     Returns:
       A list of all images in the directory in the TF format (You need to call sess.run() or .eval() to get the value).
     """
-    filename = os.path.join('record_save', 'tmp' + '.tfrecords')
+    filename = os.path.join('record_save', 'validation' + '.tfrecords')
     writer = tf.python_io.TFRecordWriter(filename)
     for age_i in range(num_classes):
         jpg_files_path = glob.glob(os.path.join(path + str(age_i), '*.[jJ][pP][gG]'))
@@ -96,12 +96,12 @@ def main(argv):
   # Get the data.
   print('transfer image data to tfrecords')
 
-  train_data_dir = '/home/bryan/data/Iris/age-train-file-2019.8/73-data/train-crop/'
-  #validation_data_dir = '/home/bryan/data/Iris/age-train-file-2019.8/73-data/test-crop/'
+  train_data_dir = '/home/bryan/data/Iris/age-train-file-2019.8/89-data/train-crop/'
+  validation_data_dir = '/home/bryan/data/Iris/age-train-file-2019.8/89-data/test-crop/'
 
-  num_classes = 73
+  num_classes = 89
   
-  read_jpgs_from(train_data_dir, num_classes, one_hot=False)
+  read_jpgs_from(validation_data_dir, num_classes, one_hot=False)
   #validation_images, validation_labels = read_jpgs_from(validataion_data_dir, num_classes, one_hot=False)	
   
 
